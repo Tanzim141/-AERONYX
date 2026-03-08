@@ -1,8 +1,9 @@
 
 import { GoogleGenAI, Type } from "@google/genai";
-import { AnalysisOutput } from "../types";
+import { AnalysisOutput, Attachment } from "../types";
 
-const ai = new GoogleGenAI({ apiKey: process.env.API_KEY || '' });
+const apiKey = process.env.GEMINI_API_KEY || process.env.API_KEY || '';
+const ai = new GoogleGenAI({ apiKey });
 
 const SYSTEM_INSTRUCTION = `
 You are a high-performance AI engine built to assist users in achieving real-world results.
@@ -29,18 +30,30 @@ Prefer: Step-by-step reasoning, Actionable recommendations, Real examples, Clear
 Never: Guess, Hallucinate facts, Overcomplicate simple tasks.
 `;
 
-export const analyzeRequest = async (prompt: string, history: any[] = []): Promise<AnalysisOutput> => {
+export const analyzeRequest = async (prompt: string, history: any[] = [], attachments: Attachment[] = []): Promise<AnalysisOutput> => {
   try {
+    const parts: any[] = [];
+    
+    attachments.forEach(att => {
+      parts.push({
+        inlineData: {
+          mimeType: att.mimeType,
+          data: att.data
+        }
+      });
+    });
+    
+    parts.push({ text: prompt });
+
     const response = await ai.models.generateContent({
-      model: "gemini-3-pro-preview",
+      model: "gemini-3-flash-preview",
       contents: [
         ...history,
-        { role: 'user', parts: [{ text: prompt }] }
+        { role: 'user', parts }
       ],
       config: {
         systemInstruction: SYSTEM_INSTRUCTION,
         responseMimeType: "application/json",
-        thinkingConfig: { thinkingBudget: 16000 },
         responseSchema: {
           type: Type.OBJECT,
           properties: {
@@ -62,6 +75,52 @@ export const analyzeRequest = async (prompt: string, history: any[] = []): Promi
     return JSON.parse(resultText) as AnalysisOutput;
   } catch (error) {
     console.error("Gemini Analysis Error:", error);
+    throw error;
+  }
+};
+
+export const streamAnalysisRequest = async (
+  prompt: string, 
+  history: any[] = [], 
+  attachments: Attachment[], 
+  onChunk: (text: string) => void
+): Promise<void> => {
+  try {
+    const parts: any[] = [];
+    
+    attachments.forEach(att => {
+      parts.push({
+        inlineData: {
+          mimeType: att.mimeType,
+          data: att.data
+        }
+      });
+    });
+    
+    parts.push({ text: prompt });
+
+    const stream = await ai.models.generateContentStream({
+      model: "gemini-3-flash-preview",
+      contents: [
+        ...history,
+        { role: 'user', parts }
+      ],
+      config: {
+        systemInstruction: `You are a high-performance AI engine. 
+        Provide a response that is fast, accurate, and beautifully formatted using Markdown.
+        Use headers, lists, and code blocks where appropriate to make the answer easy to read.
+        Start directly with the answer.`,
+      },
+    });
+
+    for await (const chunk of stream) {
+      const chunkText = chunk.text;
+      if (chunkText) {
+        onChunk(chunkText);
+      }
+    }
+  } catch (error) {
+    console.error("Gemini Streaming Error:", error);
     throw error;
   }
 };
